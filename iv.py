@@ -5,16 +5,250 @@ import sqlite3
 import os
 import logging
 
+DB_FILENAME = 'invoice.db'
 LOG_FILENAME = '/tmp/iv.log'
 logging.basicConfig(filename=LOG_FILENAME,
                     level=logging.DEBUG,
                     )
 
-class IvDB():
-    def __init__(self,filename):
-        self.dbfilename = filename
+class SubRow(sqlite3.Row):
+    def __init__(self, *args, **kwargs):
+        if len(args):
+            super(SubRow, self).__init__(*args,**kwargs)
 
-        db = sqlite3.connect(self.dbfilename)
+            for k in self.keys():
+                setattr(self,k.lower(),self[k])
+
+    def save(self):
+        pass
+
+class Distributor(SubRow):
+    pass
+
+class Product(SubRow):
+    id = -1
+    name = ''
+    description = ''
+    price = 0.0
+    stock = 0
+    distributor = 0
+    distributor_price = 0
+    upc = ''
+    physical_product = 1
+
+    def save(self):
+        db = sqlite3.connect(DB_FILENAME)
+        c = db.cursor()
+
+        if self.id == -1:
+            c.execute("""
+                INSERT INTO products (name, price, stock, description,
+                    distributor, distributor_price, UPC, physical_product)
+                    VALUES (?,?,?,?,?,?,?,?)""",
+                    (self.name, self.price, self.stock, self.description,
+                        self.distributor, self.distributor_price, self.upc,
+                        self.physical_product,))
+            self.id = c.lastrowid
+        else:
+            c.execute("""
+                UPDATE products SET
+                    name = ?, price = ?, stock = ?, description = ?,
+                    distributor = ?, distributor_price = ?,
+                    UPC = ?, physical_product = ?
+                    WHERE id = ?""",
+                    (self.name, self.price, self.stock, self.description,
+                        self.distributor, self.distributor_price, self.upc,
+                        self.physical_product,self.id,))
+        db.commit()
+        c.close()
+        return self.id
+    pass
+
+class Customer(SubRow):
+    id = -1
+    name = ''
+    reference = ''
+    address1 = ''
+    address2 = ''
+    postcode = ''
+    city = ''
+
+    def save(self):
+        db = sqlite3.connect(DB_FILENAME)
+        c = db.cursor()
+        if self.id == -1:
+            logging.debug("""Executing:
+                INSERT INTO customer
+                (name, reference, address1, address2, postcode, city)
+                VALUES (%s) """, self.__dict__)
+            c.execute("""
+                INSERT INTO customer
+                (name, reference, address1, address2, postcode, city)
+                VALUES (?, ?, ?, ?, ?, ?) """,
+                (self.name, self.reference, self.address1, self.address2,
+                    self.postcode, self.city,))
+            self.id = c.lastrowid
+        else:
+            logging.debug("""
+                UPDATE customer SET
+                name = ?,
+                reference = ?,
+                address1 = ?,
+                address2 = ?,
+                postcode = ?,
+                city = ?
+                WHERE  id = ? [ %s ] """, self.__dict__)
+            c.execute("""
+                UPDATE customer SET
+                name = ?,
+                reference = ?,
+                address1 = ?,
+                address2 = ?,
+                postcode = ?,
+                city = ?
+                WHERE  id = ?""",
+                (self.name, self.reference, self.address1, self.address2,
+                    self.postcode, self.city, self.id,))
+        db.commit()
+        c.close()
+
+class OrderProduct():
+    id = -1
+    orderid = 0
+    productid = 0
+    price = 0
+    count = 0
+    comment = ''
+
+    # From Product
+    name = ''
+    description = ''
+    price = 0.0
+    stock = 0
+    distributor = 0
+    distributor_price = 0
+    upc = ''
+    physical_product = 1
+
+    def __init__(self, orderid = None, product = None):
+        """ Initialize from a product """
+        self.count = 1
+        if orderid:
+            self.orderid = orderid
+        if product is not None:
+            self.productid = product.id
+            self.name = product.name
+            self.description = product.description
+            self.price = product.price
+            self.stock = product.stock
+            self.distributor = product.distributor
+            self.distributor_price = product.distributor_price
+            self.upc = product.upc
+            self.physical_product = product.physical_product
+            logging.debug("self: %s",self.__dict__)
+        else:
+            logging.debug("no product!")
+
+    def save(self):
+        db = sqlite3.connect(DB_FILENAME)
+        c = db.cursor()
+        if self.id == -1:
+            logging.debug("""
+                    INSERT INTO order_products
+                    (orderId, productId, comment, price, count)
+                    VALUES (%d, %d, %s, %d, %d)
+                    """ % (self.orderid, self.productid, self.comment,
+                        self.price, self.count,))
+            c.execute("""
+                    INSERT INTO order_products
+                    (orderId, productId, comment, price, count)
+                    VALUES (?, ?, ?, ?,?)
+                    """, (self.orderid, self.productid, self.comment,
+                        self.price, self.count,))
+            self.id = c.lastrowid
+        else:
+            c.execute("""
+                    UPDATE order_products
+                    SET comment = ?, price = ?, count = ?
+                    WHERE id = ?
+                    """, (self.comment, self.price, self.count, self.id))
+        db.commit()
+        c.close()
+
+    def delete(self):
+        if self.id == -1:
+            return
+
+        db = sqlite3.connect(DB_FILENAME)
+        c = db.cursor()
+        c.execute("DELETE FROM order_products WHERE id = ?", (self.id,))
+        db.commit()
+        c.close()
+        self.id = -1
+
+def OrderProductFactory(cursor, row):
+    r = OrderProduct()
+    for idx, col in enumerate(cursor.description):
+        r.__dict__[col[0].lower()] = row[idx]
+    return r
+
+
+class Order(SubRow):
+    id = -1
+    description = ''
+    customerid = 0
+    status = 0
+    invoicefile = ''
+    created = 0
+
+    def listProducts(self):
+        db = sqlite3.connect(DB_FILENAME)
+        c = db.cursor()
+        c.row_factory = OrderProductFactory
+        c.execute("""
+                    SELECT op.id, op.orderId, op.productId, op.price, op.count,
+                    op.comment,
+                    p.name, p.description, p.distributor, p.distributor_price,
+                    p.upc, p.physical_product
+                    distributor, distributor_price, UPC, physical_product
+                    FROM order_products op
+                    INNER JOIN products p ON p.id = op.productId
+                    WHERE op.orderId = ?""", (self.id,))
+        products = c.fetchall()
+        db.close()
+        return products
+
+
+    def save(self):
+        db = sqlite3.connect(DB_FILENAME)
+        c = db.cursor()
+        if self.id == -1:
+            c.execute("""
+                INSERT INTO orders
+                (description, customerId, status, invoiceFile, created)
+                VALUES (?, ?, ?, ?, ?) """,
+                (self.description, self.customerid, self.status,
+                    self.invoicefile, self.created))
+            self.id = c.lastrowid
+        else:
+            c.execute("""
+                UPDATE orders SET
+                description = ?,
+                customerId = ?,
+                status = ?,
+                invoiceFile = ?,
+                created = ?
+                WHERE  id = ?""",
+                (self.description, self.customerid, self.status,
+                    self.invoicefile, self.created, self.id))
+
+        db.commit()
+        c.close()
+#        self.setOrderProducts(order[0], products)
+
+class IvDB():
+    def __init__(self):
+        db = sqlite3.connect(DB_FILENAME)
         c = db.cursor()
         script = ""
         with open('sql/schema.sql', 'r') as content_file:
@@ -24,169 +258,41 @@ class IvDB():
         c.close()
 
     def listDistributors(self, filter = ''):
-        db = sqlite3.connect(self.dbfilename)
+        db = sqlite3.connect(DB_FILENAME)
         c = db.cursor()
-        c.execute("""
-                    SELECT id, name
-                    FROM distributor %s""" % filter)
+
+        c.row_factory = Distributor
+        c.execute("""SELECT * FROM distributor %s""" % filter)
         dist = c.fetchall()
         db.close()
         return dist
 
     def listProducts(self, filter = ''):
-        db = sqlite3.connect(self.dbfilename)
+        db = sqlite3.connect(DB_FILENAME)
         c = db.cursor()
-        c.execute("""
-                    SELECT id, name, price, stock, description,
-                    distributor, distributor_price, UPC, physical_product
-                    FROM products %s""" % filter)
+        c.row_factory = Product
+        c.execute("""SELECT * FROM products %s""" % filter)
         products = c.fetchall()
-        products = [list(l) for l in products]
         db.close()
         return products
-
-    def listOrderProducts(self, order_id):
-        db = sqlite3.connect(self.dbfilename)
-        c = db.cursor()
-        c.execute("""
-                    SELECT op.id, op.productId, p.name, op.price, op.count, description,
-                    distributor, distributor_price, UPC, physical_product,
-                    comment
-                    FROM order_products op
-                    INNER JOIN products p ON p.id = op.productId
-                    WHERE op.orderId = ?""", (order_id,))
-        products = c.fetchall()
-        products = [list(l) for l in products]
-        db.close()
-        return products
-
-    def setOrderProducts(self, order_id, products):
-        db = sqlite3.connect(self.dbfilename)
-        c = db.cursor()
-        for p in products:
-            if p[0] == -1:
-                c.execute("""
-                    INSERT INTO order_products
-                    (orderId, productId, comment, price, count)
-                    VALUES (?, ?, ?, ?,?)
-                    """, (order_id, p[1], p[10], p[3], p[4],))
-                p[0] = c.lastrowid
-            else:
-                c.execute("""
-                    UPDATE order_products
-                    SET comment = ?, price = ?, count = ?
-                    WHERE id = ?
-                    """, (p[10], p[3], p[4],p[0],))
-        db.commit()
-        c.close()
-
-    def getProduct(self, id):
-        return self.listProducts('WHERE id = %d' % id)[0]
-
-    def saveProduct(self, product):
-        db = sqlite3.connect(self.dbfilename)
-        c = db.cursor()
-
-        if product[0] == -1:
-            logging.debug("""
-                INSERT INTO products (name, price, stock, description,
-                    distributor, distributor_price, UPC, physical_product)
-                    VALUES (?,?,?,?,?,?,?,?)""")
-            logging.debug(tuple(product[1:]))
-            c.execute("""
-                INSERT INTO products (name, price, stock, description,
-                    distributor, distributor_price, UPC, physical_product)
-                    VALUES (?,?,?,?,?,?,?,?)""",
-                    tuple(product[1:]))
-            id = c.lastrowid
-        else:
-            c.execute("""
-                UPDATE products SET
-                    name = ?, price = ?, stock = ?, description = ?,
-                    distributor = ?, distributor_price = ?,
-                    UPC = ?, physical_product = ?
-                    WHERE id = ?""",
-                    tuple(product[1:] + product[:1]))
-            id = product[0]
-        db.commit()
-        c.close()
-        return id
-
 
     def listOrders(self, filter = ''):
-        db = sqlite3.connect(self.dbfilename)
+        db = sqlite3.connect(DB_FILENAME)
         c = db.cursor()
-        c.execute("""
-                    SELECT id, description, customerId, status,
-                    invoiceFile, created
-                    FROM orders %s""" % filter)
+        c.row_factory = Order
+        c.execute("SELECT * FROM orders %s" % filter)
         orders = c.fetchall()
-        orders = [list(l) for l in orders]
         db.close()
         return orders
 
-    def getOrder(self, id):
-        return self.listOrders('WHERE id = %d' % id)[0]
-
-    def saveOrder(self, order, products):
-        db = sqlite3.connect(self.dbfilename)
-        c = db.cursor()
-        if order[0] == -1:
-            c.execute("""
-                INSERT INTO orders
-                (description, customerId, status, invoiceFile, created)
-                VALUES (?, ?, ?, ? ?) """, tuple(order[1:]))
-            order[0] = c.lastrowid
-        else:
-            c.execute("""
-                UPDATE orders SET
-                description = ?,
-                customerId = ?,
-                status = ?,
-                invoiceFile = ?,
-                created = ?
-                WHERE  id = ?""", tuple(order[1:] + order[:1]))
-        db.commit()
-        c.close()
-        self.setOrderProducts(order[0], products)
-
     def listCustomers(self, filter = ''):
-        db = sqlite3.connect(self.dbfilename)
+        db = sqlite3.connect(DB_FILENAME)
         c = db.cursor()
-        c.execute("""
-                    SELECT id, name, reference,
-                    address1, address2,
-                    postcode, city
-                    FROM customer %s""" % filter)
+        c.row_factory = Customer
+        c.execute("SELECT * FROM customer %s" % filter)
         customers = c.fetchall()
-        customers = [list(l) for l in customers]
         db.close()
         return customers
-
-    def getCustomer(self, id):
-        return self.listCustomers('WHERE id = %d' % id)[0]
-
-    def saveCustomer(self, customer):
-        db = sqlite3.connect(self.dbfilename)
-        c = db.cursor()
-        if customer[0] == -1:
-            c.execute("""
-                INSERT INTO customer
-                (name, reference, address1, address2, postcode, city)
-                VALUES (?, ?, ?, ?, ?, ?) """, tuple(customer[1:]))
-            customer[0] = c.lastrowid
-        else:
-            c.execute("""
-                UPDATE customer SET
-                name = ?,
-                reference = ?,
-                address1 = ?,
-                address2 = ?,
-                postcode = ?,
-                city = ?
-                WHERE  id = ?""", tuple(customer[1:] + customer[:1]))
-        db.commit()
-        c.close()
 
 App = None
 
@@ -194,7 +300,7 @@ class IvApp(npyscreen.NPSAppManaged):
     def onStart(self):
         npyscreen.setTheme(npyscreen.Themes.TransparentThemeLightText)
 
-        self.db = IvDB('invoice.db')
+        self.db = IvDB()
 
         self.addForm("MAIN", MainMenuForm)
         self.addForm("PRODUCTFORM", ProductForm)
@@ -235,7 +341,7 @@ class IvList(npyscreen.MultiLineAction):
 
     def actionHighlighted(self, selected, keypress):
         if self.selectForm is not None:
-            self.parent.parentApp.getForm(self.selectForm).value = selected[0]
+            self.parent.parentApp.getForm(self.selectForm).value = selected
             self.parent.parentApp.switchForm(self.selectForm)
 
     def add_record(self, *args, **keywords):
@@ -261,28 +367,54 @@ class IvListOrderProducts(IvListTitle):
         self.add_handlers({
             "+": self.increase_amount,
             "-": self.decrease_amount,
-            "^E": self.edit_post,
+            "e": self.edit_post,
+            "D": self.delete_post,
         })
     def increase_amount(self, *args, **keywords):
-        self.parent.added_products[self.entry_widget.cursor_line][4] += 1
+        op = self.parent.added_products[self.entry_widget.cursor_line]
+        op.count += 1
+
+        for p in self.parent.wProducts.values:
+            if p.id == op.productid:
+                if p.physical_product:
+                    p.stock -= 1
+                    p.updated_stock = True
+                    logging.debug("-1 stock for product %s" % p.__dict__)
+                break
+
         self.parent.update_list()
-#        self.values[self.entry_widget.cursor_line][3] += 1
-#        self.update()
 
     def decrease_amount(self, *args, **keywords):
-        self.parent.added_products[self.entry_widget.cursor_line][4] -= 1
+        op = self.parent.added_products[self.entry_widget.cursor_line]
+        op.count -= 1
+
+        for p in self.parent.wProducts.values:
+            if p.id == op.productid:
+                if p.physical_product:
+                    logging.debug("+1 stock for product %s" % p.__dict__)
+                    p.stock += 1
+                    p.updated_stock = True
+                break
+
         self.parent.update_list()
-#        self.values[self.entry_widget.cursor_line][3] -= 1
-#        self.update()
 
     def edit_post(self, *args, **keywords):
             self.parent.parentApp.getForm('ORDEREDITPRODUCTFORM').productIdx = self.entry_widget.cursor_line
             self.parent.parentApp.switchForm('ORDEREDITPRODUCTFORM')
 
-    def delete_record(self, *args, **keywords):
-        pass
-        """
-       self.parent.parentApp.myDatabase.delete_record(self.values[self.cursor_line][0])"""
+    def delete_post(self, *args, **keywords):
+        op = self.parent.added_products[self.entry_widget.cursor_line]
+        self.parent.deleted_products.append(op)
+
+        for p in self.parent.wProducts.values:
+            if p.id == op.productid:
+                if p.physical_product:
+                    p.stock += op.count
+                    p.updated_stock = True
+                break
+
+        del self.parent.added_products[self.entry_widget.cursor_line]
+        self.parent.update_list()
 
 class IvListOrderProductsAvailable(IvListTitle):
     def __init__(self, *args, **kwargs):
@@ -297,34 +429,20 @@ class IvListOrderProductsAvailable(IvListTitle):
         logging.debug("added products before: %s" % (self.parent.added_products))
         logging.debug("product to add: %s %d" % (self.values,
             self.entry_widget.cursor_line))
-        self.parent.added_products += [ [
-             -1, # Order_Product-id
-             self.values[self.entry_widget.cursor_line][0],
-             self.values[self.entry_widget.cursor_line][1],
-             self.values[self.entry_widget.cursor_line][2],
-             1, # Count
-             self.values[self.entry_widget.cursor_line][4],
-             self.values[self.entry_widget.cursor_line][5],
-             self.values[self.entry_widget.cursor_line][6],
-             self.values[self.entry_widget.cursor_line][7],
-             self.values[self.entry_widget.cursor_line][8],
-             '', # Comment
-             ] ]
+
+        self.parent.added_products.append(
+                OrderProduct(self.parent.value.id, self.values[self.entry_widget.cursor_line]))
         logging.debug("added products: %s" % (self.parent.added_products))
         self.parent.update_list()
 
         # Deduct one from this list
-        self.values[self.entry_widget.cursor_line][3] -= 1
+        self.values[self.entry_widget.cursor_line].stock -= 1
         self.update()
 
     def actionHighlighted(self, selected, keypress):
         """ Add this product to list of added products """
-        self.parent.added_products += [ [
-                selected[0:3] +
-                     [ 1 ] + # Count
-                selected[4:] ] ]
-        self.parent.update_list()
-
+        self.parent.added_products += OrderProduct(orderid =
+                self.parent.value.id, product = selected)
 
 class IvListOrders(IvList):
     def delete_record(self, *args, **keywords):
@@ -364,19 +482,25 @@ class IvSelectOne(npyscreen.SelectOne):
 class IvSelectOneTitle(npyscreen.TitleSelectOne):
     _entry_type = IvSelectOne
 
-def product_fmt_func(current_widget,vl):
-        last_columns = "%7.2f kr %7.2f st" % (vl[2], vl[3])
+def product_fmt_func(current_widget,product):
+
+        if product.physical_product:
+            last_columns = "%7.2f kr %7.2f st" % (float(product.price),
+                    float(product.stock))
+        else:
+            last_columns = "%7.2f kr %7s st" % (float(product.price), '-')
         # 6 extra chars from npyscreen
         width =  current_widget.width - len(last_columns) - 6
-        return '{0:{width}}{1}'.format(vl[1].encode('utf-8'), last_columns, width=width)
+        return u'{0:{width}}{1}'.format(product.name, last_columns, width=width)
 
 def order_product_fmt_func(current_widget,product):
-        last_columns = "%7.2f kr %7.2f st" % (product[3], product[4])
+        last_columns = "%7.2f kr %7.2f st" % (float(product.price),
+                    float(product.count))
         # 6 extra chars from npyscreen
         width =  current_widget.width - len(last_columns) - 6
         width /= 2
-        s = '{0:{width}}'.format(product[2].encode('utf-8'),width=width)
-        s += '{0:{width}}'.format(product[10].encode('utf-8'),width=width)
+        s = '{0:{width}}'.format(product.name.encode('utf-8'),width=width)
+        s += '{0:{width}}'.format(product.comment.encode('utf-8'),width=width)
         s += last_columns
         return s
 
@@ -390,7 +514,6 @@ class SubForm(npyscreen.ActionForm):
 class ProductEditForm(SubForm):
     def create(self):
         self.value = None
-
         self.wName = self.add(npyscreen.TitleText, name="Name:",value="")
         self.wDescription = self.add(npyscreen.TitleText, name="Description:",value="")
         self.wUPC = self.add(npyscreen.TitleText, name="UPC:",value="")
@@ -415,43 +538,34 @@ class ProductEditForm(SubForm):
                 value="", use_two_lines=False)
 
     def beforeEditing(self):
-        if self.value:
-            product = self.parentApp.db.getProduct(self.value)
-            self.productId = product[0]
-            self.wName.value = product[1]
-            self.wPrice.value = str(product[2])
-            self.wStock.value = str(product[3])
-            self.wDescription.value = product[4]
-            try:
-                self.wDistributor.value = [x[0] for x in
-                        self.wDistributor.values].index(product[5])
-            except:
-                self.wDistributor.value = 0
-            self.wDistributorPrice.value = str(product[6])
-            self.wUPC.value = product[7]
-            self.wPhysicalProduct.value = product[8]
-        else:
-            self.productId = -1
-            self.wName.value = ''
-            self.wDescription.value = ''
-            self.wUPC.value = ''
-            self.wPrice.value = ''
+
+        if self.value is None:
+            self.value = Product()
+
+        logging.debug(self.value)
+        self.wName.value = self.value.name
+        self.wPrice.value = str(self.value.price)
+        self.wStock.value = str(self.value.stock)
+        self.wDescription.value = self.value.description
+        try:
+            self.wDistributor.value = [x[0] for x in
+                    self.wDistributor.values].index(self.value.distributor)
+        except:
             self.wDistributor.value = 0
-            self.wDistributorPrice.value = 1
+        self.wDistributorPrice.value = str(self.value.distributor_price)
+        self.wUPC.value = self.value.upc
+        self.wPhysicalProduct.value = self.value.physical_product
 
     def on_ok(self):
-        product = [
-         self.productId,
-         self.wName.value,
-         self.wPrice.value,
-         self.wStock.value,
-         self.wDescription.value,
-         self.wDistributor.values[self.wDistributor.value[0]][0],
-         self.wDistributorPrice.value,
-         self.wUPC.value,
-         self.wPhysicalProduct.value[0]
-        ]
-        self.parentApp.db.saveProduct(product)
+        self.value.name = self.wName.value
+        self.value.price = self.wPrice.value
+        self.value.stock = self.wStock.value
+        self.value.description =  self.wDescription.value
+        self.value.distributor = self.wDistributor.values[self.wDistributor.value[0]][0]
+        self.value.distributor_price = self.wDistributorPrice.value
+        self.value.upc = self.wUPC.value
+        self.value.physical_product = self.wPhysicalProduct.value[0]
+        self.value.save()
         self.parentApp.getForm('PRODUCTFORM').wProductList.update()
         self.parentApp.switchFormPrevious()
 
@@ -485,16 +599,29 @@ class OrderEditProductForm(npyscreen.ActionPopup):
     def beforeEditing(self):
         form = self.parentApp.getForm('ORDEREDITFORM')
 
-        self.wComment.value = form.added_products[self.productIdx][10].encode('utf-8')
-        self.wPrice.value = str(form.added_products[self.productIdx][3])
-        self.wAmount.value = str(form.added_products[self.productIdx][4])
+        self.wComment.value = form.added_products[self.productIdx].comment.encode('utf-8')
+        self.wPrice.value = str(form.added_products[self.productIdx].price)
+        self.wAmount.value = str(form.added_products[self.productIdx].count)
 
     def on_ok(self):
 
         form = self.parentApp.getForm('ORDEREDITFORM')
-        form.added_products[self.productIdx][10] = self.wComment.value
-        form.added_products[self.productIdx][3] = int(self.wPrice.value)
-        form.added_products[self.productIdx][4] = int(self.wAmount.value)
+
+        op = form.added_products[self.productIdx]
+        op.comment = self.wComment.value
+        op.price = float(self.wPrice.value)
+
+        if op.count != float(self.wAmount.value):
+            # Update stock of product
+            for p in form.wProducts.values:
+                if p.id == op.productid:
+                    if p.physical_product:
+                        p.stock -= float(self.wAmount.value) - op.count
+                        p.updated_stock = True
+                    break
+
+            op.count = int(self.wAmount.value)
+
         form.from_popup = True
         self.parentApp.switchFormPrevious()
 
@@ -508,8 +635,12 @@ class OrderEditForm(SubForm):
         self.orderId = -1
         self.from_popup = False
         self.added_products = []
+        self.deleted_products = []
 
         self.wDescription = self.add(npyscreen.TitleText, name="Description:",value="")
+        self.wStatus = self.add(npyscreen.TitleSelectOne,
+                name="Status:", scroll_exit=True, max_height=3, values =
+                [ "New", "Ongoing", "Payed" ], value = 0)
         self.wCustomer = self.add(IvSelectOneTitle,
                 name="Customer:",
                 fmt = "{1:}",
@@ -543,26 +674,19 @@ class OrderEditForm(SubForm):
             return
 
         logging.debug("added products = %s" % self.wAddedProducts.values)
-        if self.value is not None:
-            order = self.parentApp.db.getOrder(self.value)
-            self.orderId = order[0]
-            self.added_products = self.parentApp.db.listOrderProducts(self.value)
+        if self.value is None:
+            self.value = Order()
 
-            total = 0
-            for p in self.added_products:
-                total += p[3] * p[4]
-            self.wTotalSum.value = str(total) + " kr"
+        self.added_products = self.value.listProducts()
+        self.deleted_products = []
 
-            self.wDescription.value = order[1]
-            try:
-                self.wCustomer.value = [x[0] for x in
-                        self.wCustomer.values].index(order[2])
-            except:
-                self.wCustomer.value = 0
-        else:
-            self.orderId = -1
-            self.added_products = []
-            self.wDescription = ''
+        self.wDescription.value = self.value.description
+        self.wStatus.value = self.value.status
+
+        try:
+            self.wCustomer.value = [x[0] for x in
+                    self.wCustomer.values].index(self.value.customerid)
+        except:
             self.wCustomer.value = 0
 
         self.update_list()
@@ -573,27 +697,42 @@ class OrderEditForm(SubForm):
         # Recalculate total
         total = 0
         for p in self.added_products:
-            total = total + (p[3] * p[4])
+            total = total + (p.price * p.count)
         self.wTotalSum.value = str(total) + " kr"
 
         self.wAddedProducts.display()
+        self.wProducts.display()
 
     def on_ok(self):
-        order = [
-         self.orderId,
-         self.wDescription.value, # Description
-         self.wCustomer.values[self.wCustomer.value[0]][0], # CustomerId
-         0, # Status
-         '', # Invoicefile
-         0, # Created
-        ]
-        self.parentApp.db.saveOrder(order, self.added_products)
+        self.value.description = self.wDescription.value
+        self.value.customerid = self.wCustomer.values[self.wCustomer.value[0]][0]
+        self.value.status = self.wCustomer.value[0]
+        self.value.invoicefile = ''
+        self.value.created = 0
+        self.value.save()
+
+        for p in self.added_products:
+            # Was this a new order?
+            if p.orderid == -1:
+                p.orderid = self.value.id
+            p.save()
+
+        for p in self.deleted_products:
+            p.delete()
+
+        # Check if stock has been modified
+        for p in self.wProducts.values:
+            if getattr(p,'updated_stock',False):
+                logging.debug("Save product %s" % p.__dict__)
+                p.save()
+                p.updated_stock = False
+
+
         self.parentApp.switchFormPrevious()
 
 class OrderForm(SubForm):
     def create(self):
         self.value = None
-
         self.wOrderList = self.add(IvListOrders,
                 selectForm = 'ORDEREDITFORM',
                 fmt = '{0:5d} {1:}',
@@ -606,8 +745,6 @@ class OrderForm(SubForm):
 
     def update_list(self):
         self.wOrderList.values = self.parentApp.db.listOrders()
-
-
         self.wOrderList.display()
 
 class CustomerEditForm(SubForm):
@@ -622,35 +759,24 @@ class CustomerEditForm(SubForm):
         self.wCity = self.add(npyscreen.TitleText, name="City:",value="")
 
     def beforeEditing(self):
-        if self.value is not None:
-            self.customer_id = self.value
-            customer = self.parentApp.db.getCustomer(self.customer_id)
-            self.wName.value = customer[1]
-            self.wReference.value = customer[2]
-            self.wAddress1.value = customer[3]
-            self.wAddress2.value = customer[3]
-            self.wPostcode.value = customer[4]
-            self.wCity.value = customer[5]
-        else:
-            self.customer_id = -1
-            self.wName.value = ''
-            self.wReference.value = ''
-            self.wAddress1.value = ''
-            self.wAddress2.value = ''
-            self.wPostcode.value = ''
-            self.wCity.value = ''
+        if self.value is None:
+            self.value = Customer()
+
+        self.wName.value = self.value.name
+        self.wReference.value = self.value.reference
+        self.wAddress1.value = self.value.address1
+        self.wAddress2.value = self.value.address2
+        self.wPostcode.value = self.value.postcode
+        self.wCity.value = self.value.city
 
     def on_ok(self):
-        customer = [
-         self.customer_id,
-         self.wName.value,
-         self.wReference.value,
-         self.wAddress1.value,
-         self.wAddress2.value,
-         self.wPostcode.value,
-         self.wCity.value,
-        ]
-        self.parentApp.db.saveCustomer(customer)
+        self.value.name = self.wName.value
+        self.value.reference = self.wReference.value
+        self.value.address1 = self.wAddress1.value
+        self.value.address2 = self.wAddress2.value
+        self.value.postcode = self.wPostcode.value
+        self.value.city = self.wCity.value
+        self.value.save()
         self.parentApp.switchFormPrevious()
 
 class CustomerForm(SubForm):
