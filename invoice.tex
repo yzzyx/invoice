@@ -1,0 +1,135 @@
+\documentclass[a4paper,11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[swedish]{babel}
+\usepackage[sc]{mathpazo}
+\usepackage{tabularx}
+\usepackage[usenames,dvipsnames,svgnames,table]{xcolor}
+\usepackage{colortbl}
+\usepackage{fancyhdr}
+
+\usepackage{booktabs}
+\usepackage{fp}
+\usepackage{ragged2e}
+\usepackage{longtable}
+
+
+\usepackage{fancybox}
+\usepackage[margin=2cm,top=3cm,foot=0pt]{geometry}
+
+\newcounter{cnt}
+\setcounter{cnt}{0}
+\def\inc{\stepcounter{cnt}\thecnt}
+\gdef\TotalHT{0}
+
+% \replacevar{xyz} is a placeholder for the
+% variable "xyz", replacevared by invoice.py
+\newcommand{\replacevar}[2]{\hspace{0in}#2}
+
+\newcommand{\changefont}{%
+        \fontsize{9}{11}\selectfont
+    }
+
+\newcommand{\product}[3]{%
+\inc &#1  &#3 & #2 kr  &\FPmul\temp{#2}{#3}\FPround\temp{\temp}{2}\temp~kr
+%% Totalize
+\FPadd\total{\TotalHT}{\temp}%
+\FPround\total{\total}{2}%
+\global\let\TotalHT\total%
+\\ }
+\newcommand{\totalttc}{\TotalHT~kr}
+
+\newcommand{\taxIncl}{
+  \FPmul\temp{\TotalHT}{.20}
+  \FPround\temp{\temp}{2}
+  \temp~kr%
+  \FPadd\totaltax{\TotalHT}{\temp}%
+  \FPround\totaltax{\totaltax}{2}%
+}
+
+\newcommand{\taxExcl}{
+  \FPmul\temp{\TotalHT}{.25}
+  \FPround\temp{\temp}{2}
+  \temp~kr%
+  \FPadd\totaltax{\TotalHT}{\temp}%
+  \FPround\totaltax{\totaltax}{2}%
+  \global\let\TotalHT\totaltax%
+}
+
+\definecolor{Gray}{gray}{0.9}
+
+
+\begin{document}
+
+\pagestyle{fancy}
+\fancyhf{} % clear all header and footer fields
+%\fancyfoot[R]{\footnotesize Sida \thepage\ av \pageref{LastPage}}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\setlength{\fboxsep}{1.5em}
+\setlength{\parindent}{0pt}
+\cornersize{.3}
+
+{\color{Cerulean}
+    \fontsize{48}{11}\selectfont
+    \textbf{
+oddbike}}
+
+\fancyput*(230pt,-20pt){
+    \begin{tabularx}{230pt}{XX}
+        Fakturanummer: & \replacevar{invoiceNumber} \\
+        Fakturadatum: & \replacevar{invoiceDate} \\
+    \end{tabularx}
+}
+
+\vspace{3em}
+\textbf{Fakturaadress:}\\[1em]
+\replacevar{customerName}
+\replacevar{customerAddress1}
+\replacevar{customerAddress2}
+\replacevar{customerPostcode}~~\replacevar{customerCity}
+
+\fancyput*(230pt,-90pt){
+    \begin{minipage}{85pt}
+      \begin{tabular}{ll}
+          \textbf{Er referens} & \replacevar{customerReference} \\
+        \textbf{Vår referens} & Elias Norberg\\
+        \textbf{Betalningsvilkor} & 30 dagar
+      \end{tabular}
+    \end{minipage}}
+\vspace{5em}
+
+
+\renewcommand\arraystretch{1.5}
+\begin{tabular*}{\linewidth}{cp{8.9cm}rrr}
+\rowcolor{Gray}
+\changefont \textbf{Rad} &
+\changefont \textbf{Beskrivning}  &
+\multicolumn{1}{l}{\changefont \textbf{Antal}} &
+\multicolumn{1}{l}{\changefont \textbf{\`a-pris}} &
+\multicolumn{1}{l}{\changefont \textbf{Belopp (SEK)}} \\
+
+\hline
+    \replacevar{articles}
+    &&&&\\[5em]
+\hline
+    \multicolumn{4}{r@{~~~}}{\textbf{Att betala}} & \totalttc\\
+    \multicolumn{4}{r@{~~~}}{\textbf{Varav moms (25 \%)}} & \taxIncl\\
+\hline
+\end{tabular*}
+\renewcommand\arraystretch{1}
+
+      \small Vid betalning efter förfallodagen tillkommer påminnelseavgift om 50 kr samt 10 \% dröjsmålsränta. \\
+      OBS! Vid betalning till BG/PG-konto, var god ange Fakturanummer i meddelandefältet
+
+\fancyfoot{
+    \changefont
+    \begin{tabularx}{\linewidth}{rlrlrl}
+        \hline
+          \textbf{Telefon:}  & +46(0)769329328        & \textbf{Org.nr.} & 821209-7136  & \textbf{Bankgiro:} & 770-3267 \\
+        \textbf{Hemsida:} & http://www.oddbike.se & \mbox{\textbf{VAT/Moms Reg.nr.}} & SE821209713601 & \textbf{Plusgiro} &  60 57 55-8 \\
+          \textbf{E-post:} & faktura@oddbike.se & \textbf{SWIFT/BIC:} & NDEASESS & & \\
+                           & & \textbf{IBAN:} & \multicolumn{3}{l}{SE97 9500 0099 6042 0605 7558} \\
+      \end{tabularx}
+  }
+\end{document}
