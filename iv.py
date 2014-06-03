@@ -4,12 +4,37 @@ import npyscreen
 import sqlite3
 import os
 import logging
+from decimal import Decimal, DecimalException
 
 DB_FILENAME = 'invoice.db'
 LOG_FILENAME = '/tmp/iv.log'
 logging.basicConfig(filename=LOG_FILENAME,
                     level=logging.DEBUG,
                     )
+
+# Setup our decimal-helper
+sqlite3.register_converter("DECIMAL", Decimal)
+sqlite3.register_adapter(Decimal, str)
+
+class SQLite3DB():
+    """ Wrapper for SQLite3 database and cursor objects,
+        which sets up adapters and converters,
+        and closes the database
+    """
+    def __enter__(self):
+        self.db = sqlite3.connect(DB_FILENAME, detect_types=sqlite3.PARSE_DECLTYPES)
+        self.c = self.db.cursor()
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.c.close()
+        self.db.close()
+
+    def execute(self, *args, **kwargs):
+        return self.c.execute(*args,**kwargs)
+
+    def commit(self, *args, **kwargs):
+        return self.db.commit(*args,**kwargs)
 
 class SubRow(sqlite3.Row):
     def __init__(self, *args, **kwargs):
@@ -37,30 +62,27 @@ class Product(SubRow):
     physical_product = 1
 
     def save(self):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-
-        if self.id == -1:
-            c.execute("""
-                INSERT INTO products (name, price, stock, description,
-                    distributor, distributor_price, UPC, physical_product)
-                    VALUES (?,?,?,?,?,?,?,?)""",
-                    (self.name, self.price, self.stock, self.description,
-                        self.distributor, self.distributor_price, self.upc,
-                        self.physical_product,))
-            self.id = c.lastrowid
-        else:
-            c.execute("""
-                UPDATE products SET
-                    name = ?, price = ?, stock = ?, description = ?,
-                    distributor = ?, distributor_price = ?,
-                    UPC = ?, physical_product = ?
-                    WHERE id = ?""",
-                    (self.name, self.price, self.stock, self.description,
-                        self.distributor, self.distributor_price, self.upc,
-                        self.physical_product,self.id,))
-        db.commit()
-        c.close()
+        with SQLite3DB() as db:
+            if self.id == -1:
+                db.execute("""
+                    INSERT INTO products (name, price, stock, description,
+                        distributor, distributor_price, UPC, physical_product)
+                        VALUES (?,?,?,?,?,?,?,?)""",
+                        (self.name, self.price, self.stock, self.description,
+                            self.distributor, self.distributor_price, self.upc,
+                            self.physical_product,))
+                self.id = db.c.lastrowid
+            else:
+                db.execute("""
+                    UPDATE products SET
+                        name = ?, price = ?, stock = ?, description = ?,
+                        distributor = ?, distributor_price = ?,
+                        UPC = ?, physical_product = ?
+                        WHERE id = ?""",
+                        (self.name, self.price, self.stock, self.description,
+                            self.distributor, self.distributor_price, self.upc,
+                            self.physical_product,self.id,))
+            db.commit()
         return self.id
     pass
 
@@ -74,43 +96,41 @@ class Customer(SubRow):
     city = ''
 
     def save(self):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-        if self.id == -1:
-            logging.debug("""Executing:
-                INSERT INTO customer
-                (name, reference, address1, address2, postcode, city)
-                VALUES (%s) """, self.__dict__)
-            c.execute("""
-                INSERT INTO customer
-                (name, reference, address1, address2, postcode, city)
-                VALUES (?, ?, ?, ?, ?, ?) """,
-                (self.name, self.reference, self.address1, self.address2,
-                    self.postcode, self.city,))
-            self.id = c.lastrowid
-        else:
-            logging.debug("""
-                UPDATE customer SET
-                name = ?,
-                reference = ?,
-                address1 = ?,
-                address2 = ?,
-                postcode = ?,
-                city = ?
-                WHERE  id = ? [ %s ] """, self.__dict__)
-            c.execute("""
-                UPDATE customer SET
-                name = ?,
-                reference = ?,
-                address1 = ?,
-                address2 = ?,
-                postcode = ?,
-                city = ?
-                WHERE  id = ?""",
-                (self.name, self.reference, self.address1, self.address2,
-                    self.postcode, self.city, self.id,))
-        db.commit()
-        c.close()
+        with SQLite3DB() as db:
+            if self.id == -1:
+                logging.debug("""Executing:
+                    INSERT INTO customer
+                    (name, reference, address1, address2, postcode, city)
+                    VALUES (%s) """, self.__dict__)
+                db.execute("""
+                    INSERT INTO customer
+                    (name, reference, address1, address2, postcode, city)
+                    VALUES (?, ?, ?, ?, ?, ?) """,
+                    (self.name, self.reference, self.address1, self.address2,
+                        self.postcode, self.city,))
+                self.id = db.c.lastrowid
+            else:
+                logging.debug("""
+                    UPDATE customer SET
+                    name = ?,
+                    reference = ?,
+                    address1 = ?,
+                    address2 = ?,
+                    postcode = ?,
+                    city = ?
+                    WHERE  id = ? [ %s ] """, self.__dict__)
+                db.execute("""
+                    UPDATE customer SET
+                    name = ?,
+                    reference = ?,
+                    address1 = ?,
+                    address2 = ?,
+                    postcode = ?,
+                    city = ?
+                    WHERE  id = ?""",
+                    (self.name, self.reference, self.address1, self.address2,
+                        self.postcode, self.city, self.id,))
+            db.commit()
 
 class OrderProduct():
     id = -1
@@ -150,40 +170,36 @@ class OrderProduct():
             logging.debug("no product!")
 
     def save(self):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-        if self.id == -1:
-            logging.debug("""
-                    INSERT INTO order_products
-                    (orderId, productId, comment, price, count)
-                    VALUES (%d, %d, %s, %d, %d)
-                    """ % (self.orderid, self.productid, self.comment,
-                        self.price, self.count,))
-            c.execute("""
-                    INSERT INTO order_products
-                    (orderId, productId, comment, price, count)
-                    VALUES (?, ?, ?, ?,?)
-                    """, (self.orderid, self.productid, self.comment,
-                        self.price, self.count,))
-            self.id = c.lastrowid
-        else:
-            c.execute("""
-                    UPDATE order_products
-                    SET comment = ?, price = ?, count = ?
-                    WHERE id = ?
-                    """, (self.comment, self.price, self.count, self.id))
-        db.commit()
-        c.close()
+        with SQLite3DB() as db:
+            if self.id == -1:
+                logging.debug("""
+                        INSERT INTO order_products
+                        (orderId, productId, comment, price, count)
+                        VALUES (%d, %d, %s, %d, %d)
+                        """ % (self.orderid, self.productid, self.comment,
+                            self.price, self.count,))
+                db.execute("""
+                        INSERT INTO order_products
+                        (orderId, productId, comment, price, count)
+                        VALUES (?, ?, ?, ?,?)
+                        """, (self.orderid, self.productid, self.comment,
+                            self.price, self.count,))
+                self.id = db.c.lastrowid
+            else:
+                db.execute("""
+                        UPDATE order_products
+                        SET comment = ?, price = ?, count = ?
+                        WHERE id = ?
+                        """, (self.comment, self.price, self.count, self.id))
+            db.commit()
 
     def delete(self):
         if self.id == -1:
             return
 
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-        c.execute("DELETE FROM order_products WHERE id = ?", (self.id,))
-        db.commit()
-        c.close()
+        with SQLite3DB() as db:
+            db.execute("DELETE FROM order_products WHERE id = ?", (self.id,))
+            db.commit()
         self.id = -1
 
 def OrderProductFactory(cursor, row):
@@ -202,96 +218,81 @@ class Order(SubRow):
     created = 0
 
     def listProducts(self):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-        c.row_factory = OrderProductFactory
-        c.execute("""
-                    SELECT op.id, op.orderId, op.productId, op.price, op.count,
-                    op.comment,
-                    p.name, p.description, p.distributor, p.distributor_price,
-                    p.upc, p.physical_product
-                    distributor, distributor_price, UPC, physical_product
-                    FROM order_products op
-                    INNER JOIN products p ON p.id = op.productId
-                    WHERE op.orderId = ?""", (self.id,))
-        products = c.fetchall()
-        db.close()
+        products = []
+        with SQLite3DB() as db:
+            db.c.row_factory = OrderProductFactory
+            db.c.execute("""
+                        SELECT op.id, op.orderId, op.productId, op.price, op.count,
+                        op.comment,
+                        p.name, p.description, p.distributor, p.distributor_price,
+                        p.upc, p.physical_product
+                        distributor, distributor_price, UPC, physical_product
+                        FROM order_products op
+                        INNER JOIN products p ON p.id = op.productId
+                        WHERE op.orderId = ?""", (self.id,))
+            products = db.c.fetchall()
         return products
 
 
     def save(self):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-        if self.id == -1:
-            c.execute("""
-                INSERT INTO orders
-                (description, customerId, status, invoiceFile, created)
-                VALUES (?, ?, ?, ?, ?) """,
-                (self.description, self.customerid, self.status,
-                    self.invoicefile, self.created))
-            self.id = c.lastrowid
-        else:
-            c.execute("""
-                UPDATE orders SET
-                description = ?,
-                customerId = ?,
-                status = ?,
-                invoiceFile = ?,
-                created = ?
-                WHERE  id = ?""",
-                (self.description, self.customerid, self.status,
-                    self.invoicefile, self.created, self.id))
+        with SQLite3DB() as db:
+            if self.id == -1:
+                db.c.execute("""
+                    INSERT INTO orders
+                    (description, customerId, status, invoiceFile, created)
+                    VALUES (?, ?, ?, ?, ?) """,
+                    (self.description, self.customerid, self.status,
+                        self.invoicefile, self.created))
+                self.id = db.c.lastrowid
+            else:
+                db.c.execute("""
+                    UPDATE orders SET
+                    description = ?,
+                    customerId = ?,
+                    status = ?,
+                    invoiceFile = ?,
+                    created = ?
+                    WHERE  id = ?""",
+                    (self.description, self.customerid, self.status,
+                        self.invoicefile, self.created, self.id))
 
-        db.commit()
-        c.close()
-#        self.setOrderProducts(order[0], products)
+            db.db.commit()
 
 class IvDB():
     def __init__(self):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-        script = ""
-        with open('sql/schema.sql', 'r') as content_file:
-            script = content_file.read()
-        c.executescript(script)
-        db.commit()
-        c.close()
+        with SQLite3DB() as db:
+            script = ""
+            with open('sql/schema.sql', 'r') as content_file:
+                script = content_file.read()
+            db.c.executescript(script)
+            db.db.commit()
 
     def listDistributors(self, filter = ''):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-
-        c.row_factory = Distributor
-        c.execute("""SELECT * FROM distributor %s""" % filter)
-        dist = c.fetchall()
-        db.close()
+        with SQLite3DB() as db:
+            db.c.row_factory = Distributor
+            db.c.execute("""SELECT * FROM distributor %s""" % filter)
+            dist = db.c.fetchall()
         return dist
 
     def listProducts(self, filter = ''):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-        c.row_factory = Product
-        c.execute("""SELECT * FROM products %s""" % filter)
-        products = c.fetchall()
-        db.close()
+        with SQLite3DB() as db:
+            db.c.row_factory = Product
+            db.c.execute("""SELECT * FROM products %s""" % filter)
+            products = db.c.fetchall()
         return products
 
     def listOrders(self, filter = ''):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-        c.row_factory = Order
-        c.execute("SELECT * FROM orders %s" % filter)
-        orders = c.fetchall()
-        db.close()
+        with SQLite3DB() as db:
+            db.c.row_factory = Order
+            db.c.execute("SELECT * FROM orders %s" % filter)
+            orders = db.c.fetchall()
         return orders
 
     def listCustomers(self, filter = ''):
-        db = sqlite3.connect(DB_FILENAME)
-        c = db.cursor()
-        c.row_factory = Customer
-        c.execute("SELECT * FROM customer %s" % filter)
-        customers = c.fetchall()
-        db.close()
+        with SQLite3DB() as db:
+            db.c.row_factory = Customer
+            db.c.execute("SELECT * FROM customer %s" % filter)
+            customers = db.c.fetchall()
         return customers
 
 App = None
@@ -310,7 +311,6 @@ class IvApp(npyscreen.NPSAppManaged):
         self.addForm("ORDEREDITPRODUCTFORM", OrderEditProductForm);
         self.addForm("CUSTOMERFORM", CustomerForm)
         self.addForm("CUSTOMEREDITFORM", CustomerEditForm)
-
 
 class IvList(npyscreen.MultiLineAction):
     def __init__(self, *args, **kwargs):
@@ -485,17 +485,15 @@ class IvSelectOneTitle(npyscreen.TitleSelectOne):
 def product_fmt_func(current_widget,product):
 
         if product.physical_product:
-            last_columns = "%7.2f kr %7.2f st" % (float(product.price),
-                    float(product.stock))
+            last_columns = "%7.2f kr %7.2f st" % (product.price, product.stock)
         else:
-            last_columns = "%7.2f kr %7s st" % (float(product.price), '-')
+            last_columns = "%7.2f kr %7s st" % (product.price, '-')
         # 6 extra chars from npyscreen
         width =  current_widget.width - len(last_columns) - 6
         return u'{0:{width}}{1}'.format(product.name, last_columns, width=width)
 
 def order_product_fmt_func(current_widget,product):
-        last_columns = "%7.2f kr %7.2f st" % (float(product.price),
-                    float(product.count))
+        last_columns = "%7.2f kr %7.2f st" % (product.price, product.count)
         # 6 extra chars from npyscreen
         width =  current_widget.width - len(last_columns) - 6
         width /= 2
@@ -558,11 +556,25 @@ class ProductEditForm(SubForm):
 
     def on_ok(self):
         self.value.name = self.wName.value
-        self.value.price = self.wPrice.value
-        self.value.stock = self.wStock.value
+
+        try:
+            self.value.price = Decimal(self.wPrice.value)
+        except DecimalException:
+            pass
+
+        try:
+            self.value.stock = Decimal(self.wStock.value)
+        except DecimalException:
+            pass
+
         self.value.description =  self.wDescription.value
         self.value.distributor = self.wDistributor.values[self.wDistributor.value[0]][0]
-        self.value.distributor_price = self.wDistributorPrice.value
+
+        try:
+            self.value.distributor_price = Decimal(self.wDistributorPrice.value)
+        except DecimalException:
+            pass
+
         self.value.upc = self.wUPC.value
         self.value.physical_product = self.wPhysicalProduct.value[0]
         self.value.save()
@@ -609,18 +621,25 @@ class OrderEditProductForm(npyscreen.ActionPopup):
 
         op = form.added_products[self.productIdx]
         op.comment = self.wComment.value
-        op.price = float(self.wPrice.value)
+        try: 
+            op.price = Decimal(self.wPrice.value)
+        except DecimalException:
+            pass
 
-        if op.count != float(self.wAmount.value):
-            # Update stock of product
-            for p in form.wProducts.values:
-                if p.id == op.productid:
-                    if p.physical_product:
-                        p.stock -= float(self.wAmount.value) - op.count
-                        p.updated_stock = True
-                    break
+        try:
+            new_count = Decimal(self.wAmount.value)
+            if op.count != new_count:
+                # Update stock of product
+                for p in form.wProducts.values:
+                    if p.id == op.productid:
+                        if p.physical_product:
+                            p.stock -= new_count - op.count
+                            p.updated_stock = True
+                        break
 
-            op.count = int(self.wAmount.value)
+                op.count = new_count
+        except DecimalException:
+            pass
 
         form.from_popup = True
         self.parentApp.switchFormPrevious()
@@ -695,7 +714,7 @@ class OrderEditForm(SubForm):
         self.wAddedProducts.values = self.added_products
 
         # Recalculate total
-        total = 0
+        total = Decimal(0)
         for p in self.added_products:
             total = total + (p.price * p.count)
         self.wTotalSum.value = str(total) + " kr"
@@ -726,7 +745,6 @@ class OrderEditForm(SubForm):
                 logging.debug("Save product %s" % p.__dict__)
                 p.save()
                 p.updated_stock = False
-
 
         self.parentApp.switchFormPrevious()
 
