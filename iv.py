@@ -277,14 +277,14 @@ class IvDB():
     def listProducts(self, filter = ''):
         with SQLite3DB() as db:
             db.c.row_factory = Product
-            db.c.execute("""SELECT * FROM products %s""" % filter)
+            db.c.execute("""SELECT * FROM products %s ORDER BY name""" % filter)
             products = db.c.fetchall()
         return products
 
     def listOrders(self, filter = ''):
         with SQLite3DB() as db:
             db.c.row_factory = Order
-            db.c.execute("SELECT * FROM orders %s" % filter)
+            db.c.execute("SELECT * FROM orders %s ORDER BY id" % filter)
             orders = db.c.fetchall()
         return orders
 
@@ -488,28 +488,35 @@ def product_fmt_func(current_widget,product):
             last_columns = "%7.2f kr %7.2f st" % (product.price, product.stock)
         else:
             last_columns = "%7.2f kr %7s st" % (product.price, '-')
-        # 6 extra chars from npyscreen
-        width =  current_widget.width - len(last_columns) - 6
+        # 4 extra chars from npyscreen
+        width =  current_widget.width - len(last_columns) - 4
         return u'{0:{width}}{1}'.format(product.name, last_columns, width=width)
 
 def order_product_fmt_func(current_widget,product):
         last_columns = "%7.2f kr %7.2f st" % (product.price, product.count)
-        # 6 extra chars from npyscreen
-        width =  current_widget.width - len(last_columns) - 6
+        # 4 extra chars from npyscreen
+        width =  current_widget.width - len(last_columns) - 4
         width /= 2
         s = '{0:{width}}'.format(product.name.encode('utf-8'),width=width)
         s += '{0:{width}}'.format(product.comment.encode('utf-8'),width=width)
         s += last_columns
         return s
 
-class SubForm(npyscreen.ActionForm):
+class SubForm(npyscreen.Form):
     def on_ok(self):
         self.parentApp.switchFormPrevious()
 
     def on_cancel(self):
         self.parentApp.switchFormPrevious()
 
-class ProductEditForm(SubForm):
+class SubActionForm(npyscreen.ActionForm):
+    def on_ok(self):
+        self.parentApp.switchFormPrevious()
+
+    def on_cancel(self):
+        self.parentApp.switchFormPrevious()
+
+class ProductEditForm(SubActionForm):
     def create(self):
         self.value = None
         self.wName = self.add(npyscreen.TitleText, name="Name:",value="")
@@ -597,6 +604,9 @@ class ProductForm(SubForm):
     def beforeEditing(self):
         self.update_list()
 
+    def afterEditing(self):
+        self.parentApp.switchFormPrevious()
+
     def update_list(self):
         self.wProductList.values = self.parentApp.db.listProducts()
         self.wProductList.display()
@@ -648,7 +658,7 @@ class OrderEditProductForm(npyscreen.ActionPopup):
         self.parentApp.switchFormPrevious()
 
 
-class OrderEditForm(SubForm):
+class OrderEditForm(SubActionForm):
     def create(self):
         self.value = None
         self.orderId = -1
@@ -670,7 +680,8 @@ class OrderEditForm(SubForm):
         self.wAddedProducts = self.add(IvListOrderProducts,
                 name = "Currently added products:",
                 display_value = order_product_fmt_func,
-                max_height = 15,
+                max_height = len(self.added_products) + 5,
+                begin_entry_at = 0,
                 scroll_exit=True,
                 values = self.added_products)
 
@@ -681,9 +692,9 @@ class OrderEditForm(SubForm):
         self.wProducts = self.add(IvListOrderProductsAvailable,
                 name = "Available products",
                 display_value = product_fmt_func,
-                max_height = 15,
-                scroll_exit=True, values =
-                self.parentApp.db.listProducts()
+                scroll_exit=True,
+                begin_entry_at = 0,
+                values = self.parentApp.db.listProducts()
                 )
 
     def beforeEditing(self):
@@ -751,21 +762,30 @@ class OrderEditForm(SubForm):
 class OrderForm(SubForm):
     def create(self):
         self.value = None
+
         self.wOrderList = self.add(IvListOrders,
                 selectForm = 'ORDEREDITFORM',
                 fmt = '{0:5d} {1:}',
-                scroll_exit=True, values =
-                self.parentApp.db.listOrders()
+                scroll_exit=True, values = []
                 )
 
     def beforeEditing(self):
+        if self.value == 1:
+            # Only show status 0 (new) and 1 (ongoing)
+            self.filter = "WHERE status IN (0, 1)"
+        else:
+            self.filter = "WHERE status = 2"
+
         self.update_list()
 
+    def afterEditing(self):
+        self.parentApp.switchFormPrevious()
+
     def update_list(self):
-        self.wOrderList.values = self.parentApp.db.listOrders()
+        self.wOrderList.values = self.parentApp.db.listOrders(self.filter)
         self.wOrderList.display()
 
-class CustomerEditForm(SubForm):
+class CustomerEditForm(SubActionForm):
     def create(self):
         self.value = None
 
@@ -811,6 +831,9 @@ class CustomerForm(SubForm):
     def beforeEditing(self):
         self.update_list()
 
+    def afterEditing(self):
+        self.parentApp.switchFormPrevious()
+
     def update_list(self):
         self.wCustomerList.values = self.parentApp.db.listCustomers()
         self.wCustomerList.display()
@@ -824,9 +847,8 @@ class MainMenuList(npyscreen.MultiLineAction):
         self.parent.parentApp.switchForm(selected[1])
 
 
-class MainMenuForm(npyscreen.Form):
+class MainMenuForm(npyscreen.ActionForm):
     def create(self):
-
         self.wa = self.add(MainMenuList,
                 scroll_exit=True, values =
                 [
