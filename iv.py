@@ -3,14 +3,9 @@
 import npyscreen
 import sqlite3
 import os
-import logging
 from decimal import Decimal, DecimalException
 
 DB_FILENAME = 'invoice.db'
-LOG_FILENAME = '/tmp/iv.log'
-logging.basicConfig(filename=LOG_FILENAME,
-                    level=logging.DEBUG,
-                    )
 
 # Setup our decimal-helper
 sqlite3.register_converter("DECIMAL", Decimal)
@@ -98,10 +93,6 @@ class Customer(SubRow):
     def save(self):
         with SQLite3DB() as db:
             if self.id == -1:
-                logging.debug("""Executing:
-                    INSERT INTO customer
-                    (name, reference, address1, address2, postcode, city)
-                    VALUES (%s) """, self.__dict__)
                 db.execute("""
                     INSERT INTO customer
                     (name, reference, address1, address2, postcode, city)
@@ -110,15 +101,6 @@ class Customer(SubRow):
                         self.postcode, self.city,))
                 self.id = db.c.lastrowid
             else:
-                logging.debug("""
-                    UPDATE customer SET
-                    name = ?,
-                    reference = ?,
-                    address1 = ?,
-                    address2 = ?,
-                    postcode = ?,
-                    city = ?
-                    WHERE  id = ? [ %s ] """, self.__dict__)
                 db.execute("""
                     UPDATE customer SET
                     name = ?,
@@ -165,19 +147,10 @@ class OrderProduct():
             self.distributor_price = product.distributor_price
             self.upc = product.upc
             self.physical_product = product.physical_product
-            logging.debug("self: %s",self.__dict__)
-        else:
-            logging.debug("no product!")
 
     def save(self):
         with SQLite3DB() as db:
             if self.id == -1:
-                logging.debug("""
-                        INSERT INTO order_products
-                        (orderId, productId, comment, price, count)
-                        VALUES (%d, %d, %s, %d, %d)
-                        """ % (self.orderid, self.productid, self.comment,
-                            self.price, self.count,))
                 db.execute("""
                         INSERT INTO order_products
                         (orderId, productId, comment, price, count)
@@ -379,7 +352,6 @@ class IvListOrderProducts(IvListTitle):
                 if p.physical_product:
                     p.stock -= 1
                     p.updated_stock = True
-                    logging.debug("-1 stock for product %s" % p.__dict__)
                 break
 
         self.parent.update_list()
@@ -391,7 +363,6 @@ class IvListOrderProducts(IvListTitle):
         for p in self.parent.wProducts.values:
             if p.id == op.productid:
                 if p.physical_product:
-                    logging.debug("+1 stock for product %s" % p.__dict__)
                     p.stock += 1
                     p.updated_stock = True
                 break
@@ -426,13 +397,8 @@ class IvListOrderProductsAvailable(IvListTitle):
     def increase_amount(self, *args, **keywords):
         """ Add this product to list of added products """
 
-        logging.debug("added products before: %s" % (self.parent.added_products))
-        logging.debug("product to add: %s %d" % (self.values,
-            self.entry_widget.cursor_line))
-
         self.parent.added_products.append(
                 OrderProduct(self.parent.value.id, self.values[self.entry_widget.cursor_line]))
-        logging.debug("added products: %s" % (self.parent.added_products))
         self.parent.update_list()
 
         # Deduct one from this list
@@ -547,7 +513,6 @@ class ProductEditForm(SubActionForm):
         if self.value is None:
             self.value = Product()
 
-        logging.debug(self.value)
         self.wName.value = self.value.name
         self.wPrice.value = str(self.value.price)
         self.wStock.value = str(self.value.stock)
@@ -605,7 +570,8 @@ class ProductForm(SubForm):
         self.update_list()
 
     def afterEditing(self):
-        self.parentApp.switchFormPrevious()
+        if self.parentApp.NEXT_ACTIVE_FORM == self.FORM_NAME:
+            self.parentApp.switchFormPrevious()
 
     def update_list(self):
         self.wProductList.values = self.parentApp.db.listProducts()
@@ -669,7 +635,7 @@ class OrderEditForm(SubActionForm):
         self.wDescription = self.add(npyscreen.TitleText, name="Description:",value="")
         self.wStatus = self.add(npyscreen.TitleSelectOne,
                 name="Status:", scroll_exit=True, max_height=3, values =
-                [ "New", "Ongoing", "Payed" ], value = 0)
+                [ "New", "Sent", "Payed" ], value = 0)
         self.wCustomer = self.add(IvSelectOneTitle,
                 name="Customer:",
                 fmt = "{1:}",
@@ -703,7 +669,6 @@ class OrderEditForm(SubActionForm):
             self.update_list()
             return
 
-        logging.debug("added products = %s" % self.wAddedProducts.values)
         if self.value is None:
             self.value = Order()
 
@@ -753,7 +718,6 @@ class OrderEditForm(SubActionForm):
         # Check if stock has been modified
         for p in self.wProducts.values:
             if getattr(p,'updated_stock',False):
-                logging.debug("Save product %s" % p.__dict__)
                 p.save()
                 p.updated_stock = False
 
@@ -770,16 +734,15 @@ class OrderForm(SubForm):
                 )
 
     def beforeEditing(self):
-        if self.value == 1:
-            # Only show status 0 (new) and 1 (ongoing)
-            self.filter = "WHERE status IN (0, 1)"
-        else:
-            self.filter = "WHERE status = 2"
+        if self.value is None:
+            self.value = 0
+        self.filter = "WHERE status = %d" % self.value
 
         self.update_list()
 
     def afterEditing(self):
-        self.parentApp.switchFormPrevious()
+        if self.parentApp.NEXT_ACTIVE_FORM == self.FORM_NAME:
+            self.parentApp.switchFormPrevious()
 
     def update_list(self):
         self.wOrderList.values = self.parentApp.db.listOrders(self.filter)
@@ -832,7 +795,8 @@ class CustomerForm(SubForm):
         self.update_list()
 
     def afterEditing(self):
-        self.parentApp.switchFormPrevious()
+        if self.parentApp.NEXT_ACTIVE_FORM == self.FORM_NAME:
+            self.parentApp.switchFormPrevious()
 
     def update_list(self):
         self.wCustomerList.values = self.parentApp.db.listCustomers()
@@ -853,14 +817,11 @@ class MainMenuForm(npyscreen.Form):
                 scroll_exit=True, values =
                 [
                     [ 'Produkter', 'PRODUCTFORM', 1 ],
-                    [ 'Pågende Ordrar', 'ORDERFORM', 1 ],
-                    [ 'Avslutade Ordrar', 'ORDERFORM', 2 ],
+                    [ 'Nya Ordrar', 'ORDERFORM', 0 ],
+                    [ 'Skickade Ordrar', 'ORDERFORM', 1 ],
+                    [ 'Betalade Ordrar', 'ORDERFORM', 2 ],
                     [ 'Kunder', 'CUSTOMERFORM', 1 ],
                 ])
-
-    def afterEditing(self):
-        self.parentApp.NEXT_ACTIVE_FORM = None
-
 
 if __name__ == "__main__":
     App = IvApp()
