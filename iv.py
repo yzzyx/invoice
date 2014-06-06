@@ -847,7 +847,7 @@ class MainMenuList(npyscreen.MultiLineAction):
         self.parent.parentApp.switchForm(selected[1])
 
 
-class MainMenuForm(npyscreen.ActionForm):
+class MainMenuForm(npyscreen.Form):
     def create(self):
         self.wa = self.add(MainMenuList,
                 scroll_exit=True, values =
@@ -857,6 +857,10 @@ class MainMenuForm(npyscreen.ActionForm):
                     [ 'Avslutade Ordrar', 'ORDERFORM', 2 ],
                     [ 'Kunder', 'CUSTOMERFORM', 1 ],
                 ])
+
+    def afterEditing(self):
+        self.parentApp.NEXT_ACTIVE_FORM = None
+
 
 if __name__ == "__main__":
     App = IvApp()
