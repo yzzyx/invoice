@@ -135,6 +135,9 @@ for p in db_cursor.fetchall():
     else:
         productsStr = productsStr + u"\\product{%s}{%.2f}{%.2f}\n" % (p[0], price, count)
 
+productsStr = productsStr.replace('&',"\\&")
+productsStr = productsStr.replace('"',"$\\,''$")
+
 p = subprocess.Popen(['pdflatex', '-jobname', 'invoice-%s-%d' % (dateStr,orderId),
     '-output-directory','output'], stdin = subprocess.PIPE, stdout = None)
 
@@ -151,7 +154,7 @@ with open("invoice.tex","r") as inputFile:
         line = line.replace(u"\\replacevar{invoiceDate}", dateStr)
 
         p.stdin.write(line.encode("utf-8"))
-#        print line.encode("utf-8"),
+        print line.encode("utf-8"),
 
 print "Waiting for pdflatex to finish..."
 p.wait()
