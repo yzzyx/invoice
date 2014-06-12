@@ -337,7 +337,7 @@ object to be passed to the contained widget."""
         
 
     def filter_value(self, index):
-        if self._filter.encode('utf-8') in self.display_value(self.values[index]):
+        if self._filter.lower() in self.display_value(self.values[index]).lower():
             return True
         else:
             return False

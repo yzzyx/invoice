@@ -463,8 +463,8 @@ def order_product_fmt_func(current_widget,product):
         # 4 extra chars from npyscreen
         width =  current_widget.width - len(last_columns) - 4
         width /= 2
-        s = '{0:{width}}'.format(product.name.encode('utf-8'),width=width)
-        s += '{0:{width}}'.format(product.comment.encode('utf-8'),width=width)
+        s = u'{0:{width}}'.format(product.name, width=width)
+        s += u'{0:{width}}'.format(product.comment, width=width)
         s += last_columns
         return s
 
