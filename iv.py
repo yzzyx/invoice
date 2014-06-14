@@ -823,6 +823,10 @@ class MainMenuForm(npyscreen.Form):
                     [ 'Kunder', 'CUSTOMERFORM', 1 ],
                 ])
 
+    def afterEditing(self):
+        if self.parentApp.NEXT_ACTIVE_FORM == self.FORM_NAME:
+            quit()
+
 if __name__ == "__main__":
     App = IvApp()
     App.run()
