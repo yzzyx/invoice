@@ -592,12 +592,12 @@ class OrderEditProductForm(npyscreen.ActionPopup):
         self.wAmount.value = str(form.added_products[self.productIdx].count)
 
     def on_ok(self):
-
         form = self.parentApp.getForm('ORDEREDITFORM')
 
         op = form.added_products[self.productIdx]
         op.comment = self.wComment.value
-        try: 
+
+        try:
             op.price = Decimal(self.wPrice.value)
         except DecimalException:
             pass
@@ -701,7 +701,7 @@ class OrderEditForm(SubActionForm):
     def on_ok(self):
         self.value.description = self.wDescription.value
         self.value.customerid = self.wCustomer.values[self.wCustomer.value[0]][0]
-        self.value.status = self.wCustomer.value[0]
+        self.value.status = self.wStatus.value[0]
         self.value.invoicefile = ''
         self.value.created = 0
         self.value.save()
